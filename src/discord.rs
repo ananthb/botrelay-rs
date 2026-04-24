@@ -100,6 +100,33 @@ impl DiscordBot {
         verify_ed25519(&self.public_key_hex, signature_hex, timestamp, body).await
     }
 
+    /// List all text channels in a guild (filters `type == 0`, sorted by
+    /// position).
+    pub async fn list_guild_text_channels(&self, guild_id: &str) -> Result<Vec<GuildChannel>> {
+        let url = format!("{API_BASE}/guilds/{guild_id}/channels");
+        let resp = self.call_api(Method::Get, &url, None).await?;
+        let mut channels: Vec<GuildChannel> = decode(resp)?;
+        channels.retain(|c| c.channel_type == 0);
+        channels.sort_by_key(|c| c.position);
+        Ok(channels)
+    }
+
+    /// Fetch a guild object. Returns `None` on any error (useful when you
+    /// want a display name and don't care about failures).
+    pub async fn fetch_guild(&self, guild_id: &str) -> Option<Guild> {
+        let url = format!("{API_BASE}/guilds/{guild_id}");
+        let resp = self.call_api(Method::Get, &url, None).await.ok()?;
+        serde_json::from_str(&resp).ok()
+    }
+
+    /// Make the bot leave a guild. Best-effort; errors are returned but not
+    /// typically acted upon by callers.
+    pub async fn leave_guild(&self, guild_id: &str) -> Result<()> {
+        let url = format!("{API_BASE}/users/@me/guilds/{guild_id}");
+        let _ = self.call_api(Method::Delete, &url, None).await?;
+        Ok(())
+    }
+
     async fn call_api(&self, method: Method, url: &str, body: Option<String>) -> Result<String> {
         let headers = Headers::new();
         headers.set("Authorization", &format!("Bot {}", self.token))?;
@@ -139,12 +166,57 @@ pub fn parse_interaction(body: &[u8]) -> Result<Interaction> {
 
 #[derive(Serialize, Default, Clone, Debug)]
 pub struct CreateMessage {
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub content: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<ActionRow>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub embeds: Vec<Embed>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flags: Option<u64>,
 }
+
+/// Discord rich embed.
+#[derive(Serialize, Default, Clone, Debug)]
+pub struct Embed {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 24-bit RGB integer (e.g. `0x5865F2`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<EmbedField>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer: Option<EmbedFooter>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct EmbedField {
+    pub name: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub inline: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct EmbedFooter {
+    pub text: String,
+}
+
+/// Standard Discord button style values. Using the raw integers is fine too
+/// — this enum just documents which is which.
+pub mod button_style {
+    pub const PRIMARY: u8 = 1;
+    pub const SECONDARY: u8 = 2;
+    pub const SUCCESS: u8 = 3;
+    pub const DANGER: u8 = 4;
+    pub const LINK: u8 = 5;
+}
+
+/// The ephemeral message flag (MESSAGE_FLAGS_EPHEMERAL = 1 << 6).
+pub const MESSAGE_FLAG_EPHEMERAL: u64 = 64;
 
 /// A row of interactive components. Discord requires buttons/selects be
 /// inside an action row (`type: 1`).
@@ -183,16 +255,32 @@ pub struct Component {
 }
 
 impl Component {
-    /// A primary (blue) button.
-    pub fn primary_button(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
+    /// A button with the given style (see [`button_style`]).
+    pub fn button(
+        style: u8,
+        custom_id: impl Into<String>,
+        label: impl Into<String>,
+    ) -> Self {
         Component {
             component_type: 2,
             custom_id: custom_id.into(),
-            style: Some(1),
+            style: Some(style),
             label: Some(label.into()),
             value: None,
             required: None,
         }
+    }
+    /// Shortcut for [`button_style::PRIMARY`].
+    pub fn primary_button(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::button(button_style::PRIMARY, custom_id, label)
+    }
+    /// Shortcut for [`button_style::SUCCESS`] (green).
+    pub fn success_button(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::button(button_style::SUCCESS, custom_id, label)
+    }
+    /// Shortcut for [`button_style::DANGER`] (red).
+    pub fn danger_button(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::button(button_style::DANGER, custom_id, label)
     }
     /// A paragraph-style text input for use inside a modal.
     pub fn paragraph_input(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
@@ -290,6 +378,13 @@ pub struct Interaction {
     pub data: Option<InteractionData>,
     #[serde(default)]
     pub message: Option<Message>,
+    /// Guild member object when the interaction happened inside a guild.
+    /// Carried as raw JSON so callers can pull out the fields they need
+    /// (e.g. `member["permissions"]` to check a bit like MANAGE_GUILD).
+    #[serde(default)]
+    pub member: Option<serde_json::Value>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
     #[serde(default)]
     pub channel_id: Option<String>,
 }
@@ -298,11 +393,27 @@ impl Interaction {
     pub fn is_ping(&self) -> bool {
         self.kind == 1
     }
+    pub fn is_application_command(&self) -> bool {
+        self.kind == 2
+    }
     pub fn is_component_click(&self) -> bool {
         self.kind == 3
     }
     pub fn is_modal_submit(&self) -> bool {
         self.kind == 5
+    }
+    /// Returns true if `member.permissions` has all of the given permission
+    /// bits set. Permissions are a bitmask; common values:
+    /// `MANAGE_GUILD = 0x20`, `ADMINISTRATOR = 0x08`.
+    pub fn member_has_permissions(&self, bits: u64) -> bool {
+        let perms = self
+            .member
+            .as_ref()
+            .and_then(|m| m.get("permissions"))
+            .and_then(|p| p.as_str())
+            .and_then(|p| p.parse::<u64>().ok())
+            .unwrap_or(0);
+        perms & bits == bits
     }
     /// For modal submits: extract the text the user entered into the given
     /// input `custom_id`.
@@ -325,6 +436,12 @@ pub struct InteractionData {
     pub custom_id: Option<String>,
     #[serde(default)]
     pub components: Option<Vec<IncomingActionRow>>,
+    /// Slash-command name (for APPLICATION_COMMAND interactions).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Slash-command options, raw — shape depends on the command.
+    #[serde(default)]
+    pub options: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -345,6 +462,24 @@ pub struct Message {
     #[serde(default)]
     pub content: Option<String>,
     pub channel_id: String,
+}
+
+/// A text channel in a guild, as returned by `GET /guilds/{id}/channels`.
+#[derive(Deserialize, Clone, Debug)]
+pub struct GuildChannel {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub position: i32,
+    #[serde(rename = "type")]
+    pub channel_type: u32,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct Guild {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 // ----- Ed25519 via WebCrypto -----
@@ -452,6 +587,8 @@ mod tests {
             kind: 1,
             data: None,
             message: None,
+            member: None,
+            guild_id: None,
             channel_id: None,
         };
         assert!(ping.is_ping());
@@ -551,6 +688,7 @@ mod tests {
                 "reply:tg:msg42",
                 "Reply",
             )])],
+            embeds: vec![],
             flags: None,
         };
         let j = serde_json::to_value(&m).unwrap();
@@ -560,6 +698,53 @@ mod tests {
         assert_eq!(j["components"][0]["components"][0]["style"], 1);
         assert_eq!(j["components"][0]["components"][0]["custom_id"], "reply:tg:msg42");
         assert_eq!(j["components"][0]["components"][0]["label"], "Reply");
+    }
+
+    #[test]
+    fn create_message_with_embed_serializes() {
+        let m = CreateMessage {
+            content: String::new(),
+            embeds: vec![Embed {
+                title: Some("New message from alice".into()),
+                description: Some("Order confirmed".into()),
+                color: Some(0xF38020),
+                fields: vec![EmbedField {
+                    name: "From".into(),
+                    value: "alice@example.com".into(),
+                    inline: true,
+                }],
+                footer: Some(EmbedFooter {
+                    text: "Rule: catch-all".into(),
+                }),
+            }],
+            ..Default::default()
+        };
+        let j = serde_json::to_value(&m).unwrap();
+        // content is empty + skipped
+        assert!(j.get("content").is_none());
+        assert_eq!(j["embeds"][0]["title"], "New message from alice");
+        assert_eq!(j["embeds"][0]["color"], 0xF38020);
+        assert_eq!(j["embeds"][0]["fields"][0]["name"], "From");
+        assert_eq!(j["embeds"][0]["fields"][0]["inline"], true);
+        assert_eq!(j["embeds"][0]["footer"]["text"], "Rule: catch-all");
+    }
+
+    #[test]
+    fn member_permissions_check() {
+        let mut i = Interaction {
+            id: "1".into(),
+            token: "t".into(),
+            kind: 2,
+            data: None,
+            message: None,
+            member: Some(serde_json::json!({"permissions": "32"})),
+            guild_id: Some("g".into()),
+            channel_id: None,
+        };
+        assert!(i.member_has_permissions(0x20));
+        assert!(!i.member_has_permissions(0x40));
+        i.member = None;
+        assert!(!i.member_has_permissions(0x20));
     }
 
     #[test]
