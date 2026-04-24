@@ -439,9 +439,20 @@ pub struct InteractionData {
     /// Slash-command name (for APPLICATION_COMMAND interactions).
     #[serde(default)]
     pub name: Option<String>,
-    /// Slash-command options, raw — shape depends on the command.
+    /// Slash-command options (recursive: subcommands/groups carry nested options).
     #[serde(default)]
-    pub options: Option<serde_json::Value>,
+    pub options: Option<Vec<CommandOption>>,
+}
+
+/// A single option on a slash command. Subcommands and subcommand groups
+/// carry their own nested `options` list.
+#[derive(Deserialize, Clone, Debug)]
+pub struct CommandOption {
+    pub name: String,
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+    #[serde(default)]
+    pub options: Vec<CommandOption>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
