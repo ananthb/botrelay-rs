@@ -17,6 +17,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use worker::*;
 
+use crate::multipart::MultipartBuilder;
+
 const API_BASE: &str = "https://discord.com/api/v10";
 
 /// A Discord bot client scoped to one application / bot token.
@@ -54,6 +56,32 @@ impl DiscordBot {
         let body = serde_json::to_string(&params)
             .map_err(|e| Error::from(format!("discord: encode createMessage: {e}")))?;
         let resp = self.call_api(Method::Post, &url, Some(body)).await?;
+        decode(resp)
+    }
+
+    /// Post a bot message with one or more file attachments. The
+    /// [`CreateMessage`] is sent as the multipart `payload_json` field; each
+    /// [`Attachment`] becomes a `files[N]` part. Discord auto-attaches files
+    /// when the `attachments` array is omitted from `payload_json`.
+    pub async fn create_message_with_attachments(
+        &self,
+        channel_id: &str,
+        params: CreateMessage,
+        attachments: &[Attachment],
+    ) -> Result<Message> {
+        let url = format!("{API_BASE}/channels/{channel_id}/messages");
+        let mut mp = MultipartBuilder::new();
+        mp.add_json("payload_json", &params)?;
+        for (i, att) in attachments.iter().enumerate() {
+            let field = format!("files[{i}]");
+            let ct = if att.content_type.is_empty() {
+                "application/octet-stream"
+            } else {
+                &att.content_type
+            };
+            mp.add_file(&field, &att.filename, ct, &att.bytes);
+        }
+        let resp = self.call_api_multipart(&url, mp).await?;
         decode(resp)
     }
 
@@ -149,6 +177,45 @@ impl DiscordBot {
         }
         Ok(text)
     }
+
+    async fn call_api_multipart(&self, url: &str, mp: MultipartBuilder) -> Result<String> {
+        let headers = Headers::new();
+        headers.set("Authorization", &format!("Bot {}", self.token))?;
+        headers.set("Content-Type", &mp.content_type())?;
+
+        let bytes = mp.finish();
+        let body = js_sys::Uint8Array::from(bytes.as_slice()).buffer();
+        let req = Request::new_with_init(
+            url,
+            RequestInit::new()
+                .with_method(Method::Post)
+                .with_headers(headers)
+                .with_body(Some(body.into())),
+        )?;
+        let mut resp = Fetch::Request(req).send().await?;
+        let text = resp.text().await?;
+        if resp.status_code() >= 400 {
+            return Err(Error::from(format!(
+                "discord API {}: {}",
+                resp.status_code(),
+                text
+            )));
+        }
+        Ok(text)
+    }
+}
+
+/// A file to upload alongside a message via
+/// [`DiscordBot::create_message_with_attachments`].
+#[derive(Clone, Debug)]
+pub struct Attachment {
+    /// Filename shown in the chat. Quotes and control characters are
+    /// sanitized when emitted into the multipart header.
+    pub filename: String,
+    /// MIME type (e.g. `image/png`). Defaults to `application/octet-stream`
+    /// when empty.
+    pub content_type: String,
+    pub bytes: Vec<u8>,
 }
 
 fn decode<T: serde::de::DeserializeOwned>(body: String) -> Result<T> {
