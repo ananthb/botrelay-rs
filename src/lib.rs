@@ -6,6 +6,7 @@
 //! See [`telegram`], [`discord`], and [`reply`].
 
 pub mod discord;
+pub mod multipart;
 pub mod reply;
 pub mod telegram;
 

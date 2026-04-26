@@ -13,6 +13,8 @@
 use serde::{Deserialize, Serialize};
 use worker::*;
 
+use crate::multipart::MultipartBuilder;
+
 const API_BASE: &str = "https://api.telegram.org";
 
 /// A Telegram Bot API client, scoped to a single bot token.
@@ -37,6 +39,53 @@ impl TelegramBot {
         let body = serde_json::to_string(&params)
             .map_err(|e| Error::from(format!("telegram: encode sendMessage: {e}")))?;
         let resp = self.call_api(&self.method_url("sendMessage"), body).await?;
+        extract_ok(resp)
+    }
+
+    /// Upload a photo to a chat. The photo bytes are sent as the `photo`
+    /// multipart part; everything else goes through as form fields. Returns
+    /// the created [`Message`] on success.
+    pub async fn send_photo(&self, params: SendPhoto) -> Result<Message> {
+        let SendPhoto {
+            chat_id,
+            photo,
+            photo_filename,
+            photo_content_type,
+            caption,
+            parse_mode,
+            disable_notification,
+            reply_to_message_id,
+        } = params;
+
+        let mut mp = MultipartBuilder::new();
+        mp.add_text("chat_id", &chat_id);
+        if let Some(c) = caption.as_deref() {
+            mp.add_text("caption", c);
+        }
+        if let Some(pm) = parse_mode {
+            mp.add_text("parse_mode", parse_mode_wire(pm));
+        }
+        if let Some(d) = disable_notification {
+            mp.add_text("disable_notification", if d { "true" } else { "false" });
+        }
+        if let Some(id) = reply_to_message_id {
+            mp.add_text("reply_to_message_id", &id.to_string());
+        }
+        let filename = if photo_filename.is_empty() {
+            "photo.png"
+        } else {
+            &photo_filename
+        };
+        let content_type = if photo_content_type.is_empty() {
+            "image/png"
+        } else {
+            &photo_content_type
+        };
+        mp.add_file("photo", filename, content_type, &photo);
+
+        let resp = self
+            .call_api_multipart(&self.method_url("sendPhoto"), mp)
+            .await?;
         extract_ok(resp)
     }
 
@@ -72,6 +121,35 @@ impl TelegramBot {
             .await
             .map_err(|e| Error::from(format!("telegram: decode response: {e}")))
     }
+
+    async fn call_api_multipart(
+        &self,
+        url: &str,
+        mp: MultipartBuilder,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        let headers = Headers::new();
+        headers.set("Content-Type", &mp.content_type())?;
+        let bytes = mp.finish();
+        let body = js_sys::Uint8Array::from(bytes.as_slice()).buffer();
+        let req = Request::new_with_init(
+            url,
+            RequestInit::new()
+                .with_method(Method::Post)
+                .with_headers(headers)
+                .with_body(Some(body.into())),
+        )?;
+        let mut resp = Fetch::Request(req).send().await?;
+        resp.json()
+            .await
+            .map_err(|e| Error::from(format!("telegram: decode response: {e}")))
+    }
+}
+
+fn parse_mode_wire(mode: ParseMode) -> &'static str {
+    match mode {
+        ParseMode::Html => "HTML",
+        ParseMode::MarkdownV2 => "MarkdownV2",
+    }
 }
 
 /// Parse a webhook body into an [`Update`].
@@ -96,12 +174,27 @@ pub struct SendMessage {
     pub reply_to_message_id: Option<i64>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub enum ParseMode {
     #[serde(rename = "HTML")]
     Html,
     MarkdownV2,
+}
+
+/// Parameters for `sendPhoto`. `photo` is the raw image bytes; everything
+/// else is optional. `photo_filename` and `photo_content_type` populate the
+/// multipart file part (defaults: `photo.png`, `image/png`).
+#[derive(Default, Clone, Debug)]
+pub struct SendPhoto {
+    pub chat_id: String,
+    pub photo: Vec<u8>,
+    pub photo_filename: String,
+    pub photo_content_type: String,
+    pub caption: Option<String>,
+    pub parse_mode: Option<ParseMode>,
+    pub disable_notification: Option<bool>,
+    pub reply_to_message_id: Option<i64>,
 }
 
 /// Envelope around every Bot API response — we unwrap `result` via
