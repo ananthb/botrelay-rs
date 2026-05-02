@@ -17,7 +17,7 @@ It doesn't own storage or the send-reply side — each consumer plugs in its own
 
 ```toml
 [dependencies]
-botrelay = { git = "https://github.com/ananthb/botrelay-rs" }
+botrelay = "0.1"
 ```
 
 ```rust

@@ -5,6 +5,9 @@ edition = "2021"
 description = "Forward content to Telegram and Discord bots and route replies back — reusable primitives for Cloudflare Workers"
 license = "AGPL-3.0"
 repository = "https://github.com/ananthb/botrelay-rs"
+readme = "README.md"
+keywords = ["telegram", "discord", "bot", "cloudflare-workers", "webhook"]
+categories = ["api-bindings", "web-programming", "wasm"]
 
 [dependencies]
 worker = "0.7"
