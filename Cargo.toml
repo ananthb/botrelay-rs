@@ -1,6 +1,6 @@
 [package]
 name = "botrelay"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Forward content to Telegram and Discord bots and route replies back — reusable primitives for Cloudflare Workers"
 license = "AGPL-3.0"
