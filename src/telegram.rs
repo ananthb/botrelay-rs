@@ -154,8 +154,7 @@ fn parse_mode_wire(mode: ParseMode) -> &'static str {
 
 /// Parse a webhook body into an [`Update`].
 pub fn parse_update(body: &[u8]) -> Result<Update> {
-    serde_json::from_slice(body)
-        .map_err(|e| Error::from(format!("telegram: decode update: {e}")))
+    serde_json::from_slice(body).map_err(|e| Error::from(format!("telegram: decode update: {e}")))
 }
 
 /// Parameters for `sendMessage`. Fill `chat_id` and `text` at minimum.
@@ -170,7 +169,10 @@ pub struct SendMessage {
         skip_serializing_if = "Option::is_none"
     )]
     pub disable_preview: Option<bool>,
-    #[serde(rename = "reply_to_message_id", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "reply_to_message_id",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub reply_to_message_id: Option<i64>,
 }
 
@@ -218,8 +220,7 @@ fn extract_ok<T: serde::de::DeserializeOwned>(env: ApiEnvelope<serde_json::Value
     let value = env
         .result
         .ok_or_else(|| Error::from("telegram API: missing result"))?;
-    serde_json::from_value(value)
-        .map_err(|e| Error::from(format!("telegram: decode result: {e}")))
+    serde_json::from_value(value).map_err(|e| Error::from(format!("telegram: decode result: {e}")))
 }
 
 // ----- Update / Message types -----

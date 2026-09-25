@@ -67,7 +67,12 @@ impl MultipartBuilder {
         self.body
     }
 
-    fn write_part_header(&mut self, name: &str, filename: Option<&str>, content_type: Option<&str>) {
+    fn write_part_header(
+        &mut self,
+        name: &str,
+        filename: Option<&str>,
+        content_type: Option<&str>,
+    ) {
         self.body.extend_from_slice(b"--");
         self.body.extend_from_slice(self.boundary.as_bytes());
         self.body.extend_from_slice(b"\r\n");
@@ -148,7 +153,9 @@ mod tests {
         assert!(s.contains("Content-Type: image/png\r\n"));
         // Body bytes appear verbatim before the closing boundary.
         let expected_chunk = b"\r\n\r\n\x01\x02\x03\x04\r\n--B--\r\n";
-        assert!(body.windows(expected_chunk.len()).any(|w| w == expected_chunk));
+        assert!(body
+            .windows(expected_chunk.len())
+            .any(|w| w == expected_chunk));
     }
 
     #[test]
