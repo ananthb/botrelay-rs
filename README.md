@@ -17,7 +17,7 @@ It doesn't own storage or the send-reply side — each consumer plugs in its own
 
 ```toml
 [dependencies]
-botrelay = "0.1"
+botrelay = "0.2"
 ```
 
 ```rust
