@@ -20,10 +20,17 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: release
+    permissions:
+      # Lets crates-io-auth-action mint a short-lived OIDC token at
+      # publish time, scoped to this repo + workflow. No long-lived
+      # secret to rotate, and nothing to expire.
+      id-token: write
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
       - name: Publish botrelay
         run: cargo publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
