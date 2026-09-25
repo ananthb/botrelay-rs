@@ -47,11 +47,7 @@ impl DiscordBot {
     }
 
     /// Post a bot message to a channel.
-    pub async fn create_message(
-        &self,
-        channel_id: &str,
-        params: CreateMessage,
-    ) -> Result<Message> {
+    pub async fn create_message(&self, channel_id: &str, params: CreateMessage) -> Result<Message> {
         let url = format!("{API_BASE}/channels/{channel_id}/messages");
         let body = serde_json::to_string(&params)
             .map_err(|e| Error::from(format!("discord: encode createMessage: {e}")))?;
@@ -107,10 +103,7 @@ impl DiscordBot {
         token: &str,
         params: CreateMessage,
     ) -> Result<Message> {
-        let url = format!(
-            "{API_BASE}/webhooks/{}/{token}",
-            self.application_id
-        );
+        let url = format!("{API_BASE}/webhooks/{}/{token}", self.application_id);
         let body = serde_json::to_string(&params)
             .map_err(|e| Error::from(format!("discord: encode followup: {e}")))?;
         let resp = self.call_api(Method::Post, &url, Some(body)).await?;
@@ -323,11 +316,7 @@ pub struct Component {
 
 impl Component {
     /// A button with the given style (see [`button_style`]).
-    pub fn button(
-        style: u8,
-        custom_id: impl Into<String>,
-        label: impl Into<String>,
-    ) -> Self {
+    pub fn button(style: u8, custom_id: impl Into<String>, label: impl Into<String>) -> Self {
         Component {
             component_type: 2,
             custom_id: custom_id.into(),
@@ -395,7 +384,11 @@ impl InteractionResponse {
     pub fn pong() -> Self {
         InteractionResponse::Pong { kind: 1 }
     }
-    pub fn modal(custom_id: impl Into<String>, title: impl Into<String>, components: Vec<ActionRow>) -> Self {
+    pub fn modal(
+        custom_id: impl Into<String>,
+        title: impl Into<String>,
+        components: Vec<ActionRow>,
+    ) -> Self {
         InteractionResponse::Modal {
             kind: 9,
             data: ModalData {
@@ -629,7 +622,7 @@ fn get_subtle() -> Result<web_sys::SubtleCrypto> {
 }
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(Error::from("hex: odd length"));
     }
     (0..hex.len())
@@ -673,7 +666,10 @@ mod tests {
         assert!(!ping.is_component_click());
         assert!(!ping.is_modal_submit());
 
-        let component = Interaction { kind: 3, ..ping.clone() };
+        let component = Interaction {
+            kind: 3,
+            ..ping.clone()
+        };
         assert!(component.is_component_click());
 
         let modal = Interaction { kind: 5, ..ping };
@@ -755,7 +751,10 @@ mod tests {
         assert_eq!(j["data"]["custom_id"], "reply:tg:abc");
         assert_eq!(j["data"]["title"], "Reply");
         assert_eq!(j["data"]["components"][0]["type"], 1);
-        assert_eq!(j["data"]["components"][0]["components"][0]["custom_id"], "reply_text");
+        assert_eq!(
+            j["data"]["components"][0]["components"][0]["custom_id"],
+            "reply_text"
+        );
     }
 
     #[test]
@@ -774,7 +773,10 @@ mod tests {
         assert_eq!(j["components"][0]["type"], 1);
         assert_eq!(j["components"][0]["components"][0]["type"], 2);
         assert_eq!(j["components"][0]["components"][0]["style"], 1);
-        assert_eq!(j["components"][0]["components"][0]["custom_id"], "reply:tg:msg42");
+        assert_eq!(
+            j["components"][0]["components"][0]["custom_id"],
+            "reply:tg:msg42"
+        );
         assert_eq!(j["components"][0]["components"][0]["label"], "Reply");
     }
 

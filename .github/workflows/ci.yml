@@ -1,0 +1,63 @@
+name: CI
+
+# Nothing built or tested this crate before `cargo publish` did, at
+# which point a tag had already been pushed and a GitHub Release cut.
+# These run on every push and PR so main is always known-good before
+# a release tag points at it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          # The crate compiles to wasm for Cloudflare Workers; the host
+          # target only ever builds the unit tests.
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+
+      # Lint the target that actually ships. All three of fmt, clippy
+      # and test are clean as of this commit, so they gate.
+      - run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+      # Tests are pure logic -- serde round-trips, multipart encoding,
+      # interaction parsing -- so they run on the host. Anything
+      # touching a worker binding would need wasm and a JS runtime.
+      - run: cargo test
+
+      - run: cargo build --target wasm32-unknown-unknown --release
+
+  package:
+    name: publish dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Catches packaging problems -- a missing file, a path dependency,
+      # bad metadata -- here rather than after a tag has been pushed and
+      # a Release created, which is how 0.2.0 ended up stranded.
+      - run: cargo publish --dry-run
